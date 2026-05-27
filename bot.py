@@ -794,6 +794,19 @@ async def _process(update: Update, data: dict, file_name: str):
                 add_new_item(code, item.get("name", ""), item.get("unit", ""), qty)
                 new_items_added.append(item)
 
+    # Resolve unit prices and create invoice for OUT documents
+    invoice_name = invoice_url = None
+    if doc_type == "OUT":
+        items_priced = _resolve_prices(data.get("items", []))
+        data = {**data, "items": items_priced}
+        invoice_name, invoice_url = create_invoice_sheet(
+            doc_ref          = data.get("doc_ref", ""),
+            dien_giai        = data.get("dien_giai", ""),
+            doc_date         = data.get("doc_date", ""),
+            so_lsx           = data.get("so_lsx", ""),
+            items_with_price = items_priced,
+        )
+
     # Color Bao_Cao_Ton_Kho BEFORE writing to GHISO
     color_results = apply_stock_colors(data.get("items", []), doc_type)
 
@@ -813,7 +826,7 @@ async def _process(update: Update, data: dict, file_name: str):
     try:
         await update.message.reply_text(reply, parse_mode="Markdown")
     except Exception:
-        await update.message.reply_text(reply)
+        await update.message.reply_text(reply)  # fallback: plain text
 
     # Send detailed color warning after GHISO write
     if color_results:
@@ -833,36 +846,25 @@ async def _process(update: Update, data: dict, file_name: str):
             msg = msg[split:].lstrip("\n")
         await update.message.reply_text(msg)
 
-    # Resolve prices and create invoice for OUT documents (after GHISO write)
-    if doc_type == "OUT":
-        try:
-            items_priced = _resolve_prices(data.get("items", []))
-            invoice_name, invoice_url = create_invoice_sheet(
-                doc_ref          = data.get("doc_ref", ""),
-                dien_giai        = data.get("dien_giai", ""),
-                doc_date         = data.get("doc_date", ""),
-                so_lsx           = data.get("so_lsx", ""),
-                items_with_price = items_priced,
+    # Invoice notification for OUT documents
+    if invoice_name and invoice_url:
+        lines = ["🧾 *Hoá đơn xuất kho đã được tạo:*\n"]
+        lines.append(f"📄 Sheet: `{invoice_name}`")
+        items_priced = data.get("items", [])
+        grand_total  = sum(float(i.get("quantity", 0)) * float(i.get("unit_price", 0))
+                           for i in items_priced)
+        for item in items_priced:
+            qty   = float(item.get("quantity", 0))
+            price = float(item.get("unit_price", 0))
+            total = qty * price
+            src   = "" if price > 0 else " _(chưa có đơn giá)_"
+            lines.append(
+                f"  • *{item.get('name', '')}* `{str(item.get('code','')).upper()}`\n"
+                f"    {qty:.0f} {item.get('unit','')} × {price:,.0f} = *{total:,.0f}*{src}"
             )
-            grand_total = sum(float(i.get("quantity", 0)) * float(i.get("unit_price", 0))
-                              for i in items_priced)
-            lines = ["🧾 *Hoá đơn xuất kho đã được tạo:*\n"]
-            lines.append(f"📄 Sheet: `{invoice_name}`")
-            for item in items_priced:
-                qty   = float(item.get("quantity", 0))
-                price = float(item.get("unit_price", 0))
-                total = qty * price
-                flag  = "" if price > 0 else " _(chưa có đơn giá)_"
-                lines.append(
-                    f"  • *{item.get('name', '')}* `{str(item.get('code','')).upper()}`\n"
-                    f"    {qty:.0f} {item.get('unit','')} × {price:,.0f} = *{total:,.0f}*{flag}"
-                )
-            lines.append(f"\n💰 *Tổng cộng: {grand_total:,.0f}*")
-            lines.append(f"\n🔗 [Mở hoá đơn]({invoice_url})")
-            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-        except Exception as e:
-            logger.error("Invoice creation failed: %s", e, exc_info=True)
-            await update.message.reply_text(f"⚠️ Không thể tạo hoá đơn: {e}")
+        lines.append(f"\n💰 *Tổng cộng: {grand_total:,.0f}*")
+        lines.append(f"\n🔗 [Mở hoá đơn]({invoice_url})")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     # Notify about newly added items
     if new_items_added:
