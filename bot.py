@@ -134,6 +134,7 @@ def get_items() -> dict[str, dict]:
         cuoi_raw = str(row[9]).strip()
         ton_cuoi = _num(cuoi_raw) if cuoi_raw and cuoi_raw not in ("-", "-   ", "  -   ") \
                    else (ton_dau + nhap_ky - xuat_ky)
+        don_gia  = _num(row[10]) if len(row) > 10 else 0.0
         items[code] = {
             "stt":      stt_val,
             "kho":      str(row[2]).strip(),
@@ -145,6 +146,7 @@ def get_items() -> dict[str, dict]:
             "nhap_ky":  nhap_ky,
             "xuat_ky":  xuat_ky,
             "ton_cuoi": ton_cuoi,
+            "don_gia":  don_gia,
             "row":      i,
         }
     return items
@@ -256,6 +258,7 @@ Analyze the document and return ONLY a valid JSON:
       "name": "tên hàng (item name)",
       "unit": "đơn vị tính",
       "quantity": numeric quantity,
+      "unit_price": numeric unit price (đơn giá), 0 if not present,
       "note": "ghi chú if any"
     }
   ]
@@ -265,6 +268,7 @@ Rules:
 - Return ONLY the JSON, no extra text.
 - doc_type: "IN" for phiếu nhập kho (NK), "OUT" for phiếu xuất kho (XK), "YC" for phiếu dự kiến xuất theo đơn hàng (DK, DH, yêu cầu xuất).
 - quantity must be a plain number.
+- unit_price: extract from "đơn giá" / "giá" / "unit price" column if present, else 0.
 - For phiếu xuất kho (OUT): use "số lượng thực nhận" as quantity; fall back to "số lượng".
 - For phiếu dự kiến xuất (YC): use "số lượng" as quantity.
 - For phiếu nhập kho (IN): use "số lượng" as quantity.
@@ -400,7 +404,7 @@ def extract_from_excel(excel_bytes: bytes) -> dict:
 
     # ── 4. Find item table header row ────────────────────────────────────────
     # Look for a row that has "mã hàng" or "stt" to find the column positions
-    col_stt  = col_code = col_name = col_unit = col_qty = col_note = col_ton_sau_dk = None
+    col_stt  = col_code = col_name = col_unit = col_qty = col_note = col_ton_sau_dk = col_price = None
     header_row_idx = None
 
     CODE_KEYS    = ("mã hàng", "ma hang", "mã nvl", "ma nvl", "mã vt", "ma vt", "item code")
@@ -410,6 +414,7 @@ def extract_from_excel(excel_bytes: bytes) -> dict:
     QTY_KEYS     = ("số lượng", "so luong", "sl", "qty", "quantity")
     NOTE_KEYS    = ("ghi chú", "ghi chu", "note", "ghi chú/note")
     TON_SAU_KEYS = ("tồn kho sau dự kiến", "ton kho sau du kien", "sau dự kiến", "sau dk", "tồn sau dk")
+    PRICE_KEYS   = ("đơn giá", "don gia", "giá bán", "gia ban", "đg", "unit price", "price")
 
     for i, row in enumerate(rows):
         row_lower = [str(c).strip().lower() if c else "" for c in row]
@@ -425,6 +430,7 @@ def extract_from_excel(excel_bytes: bytes) -> dict:
                 elif any(k in cell for k in QTY_KEYS) and col_qty is None:        col_qty        = j
                 if any(k in cell for k in NOTE_KEYS) and col_note is None:        col_note       = j
                 if any(k in cell for k in TON_SAU_KEYS) and col_ton_sau_dk is None: col_ton_sau_dk = j
+                if any(k in cell for k in PRICE_KEYS) and col_price is None:      col_price      = j
             # Also scan next 1-2 rows for sub-headers (e.g. "thực nhận" on second header row)
             for sub_row in rows[i + 1: i + 3]:
                 sub_lower = [str(c).strip().lower() if c else "" for c in sub_row]
@@ -435,6 +441,7 @@ def extract_from_excel(excel_bytes: bytes) -> dict:
                     if any(k in cell for k in UNIT_KEYS) and col_unit is None:        col_unit       = j
                     if any(k in cell for k in NOTE_KEYS) and col_note is None:        col_note       = j
                     if any(k in cell for k in TON_SAU_KEYS) and col_ton_sau_dk is None: col_ton_sau_dk = j
+                    if any(k in cell for k in PRICE_KEYS) and col_price is None:      col_price      = j
             break
 
     # ── 5. Extract item rows ──────────────────────────────────────────────────
@@ -464,8 +471,9 @@ def extract_from_excel(excel_bytes: bytes) -> dict:
                 continue
 
             ton_sau_dk = _num(row[col_ton_sau_dk]) if col_ton_sau_dk is not None and col_ton_sau_dk < len(row) and row[col_ton_sau_dk] else None
+            unit_price = _num(row[col_price]) if col_price is not None and col_price < len(row) and row[col_price] else 0.0
             items.append({"code": code, "name": name, "unit": unit, "quantity": qty, "note": note,
-                          "ton_kho_sau_dk": ton_sau_dk})
+                          "ton_kho_sau_dk": ton_sau_dk, "unit_price": unit_price})
 
     logger.info("Excel parse: found %d items", len(items))
 
@@ -625,6 +633,123 @@ def apply_stock_colors(items_extracted: list[dict], doc_type: str) -> list[dict]
     return results
 
 
+# ── Price resolution & invoice ────────────────────────────────────────────────
+
+def _resolve_prices(items_extracted: list[dict]) -> list[dict]:
+    """Fill unit_price from sheet master (col K) when not present in document."""
+    price_map = {code: item["don_gia"] for code, item in get_items().items()}
+    result = []
+    for item in items_extracted:
+        code      = str(item.get("code", "")).strip().upper()
+        doc_price = float(item.get("unit_price", 0) or 0)
+        price     = doc_price if doc_price > 0 else price_map.get(code, 0)
+        result.append({**item, "unit_price": price})
+    return result
+
+
+def create_invoice_sheet(doc_ref: str, dien_giai: str, doc_date: str,
+                          so_lsx: str, items_with_price: list[dict]) -> tuple[str, str]:
+    """Create a formatted invoice tab. Returns (sheet_name, sheet_url)."""
+    spreadsheet = _get_gc().open_by_key(GOOGLE_SHEET_ID)
+
+    # Unique sheet name
+    base = f"HĐ_{doc_ref}" if doc_ref else f"HĐ_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    base = re.sub(r"[\\/*?:\[\]]", "_", base)[:50]
+    name = base
+    existing = {ws.title for ws in spreadsheet.worksheets()}
+    suffix = 2
+    while name in existing:
+        name = f"{base}_{suffix}"
+        suffix += 1
+
+    n_items = len(items_with_price)
+    ws = spreadsheet.add_worksheet(title=name, rows=n_items + 12, cols=7)
+
+    grand_total = sum(
+        float(i.get("quantity", 0)) * float(i.get("unit_price", 0))
+        for i in items_with_price
+    )
+
+    # Build rows
+    rows_data = [
+        ["PHIẾU XUẤT KHO", "", "", "", "", "", ""],
+        ["Số phiếu:", doc_ref, "", "", "Ngày:", doc_date, ""],
+        ["Diễn giải:", dien_giai, "", "", "Số LSX:", so_lsx, ""],
+        ["", "", "", "", "", "", ""],
+        ["STT", "Mã hàng", "Tên hàng", "ĐVT", "Số lượng", "Đơn giá", "Thành tiền"],
+    ]
+    for idx, item in enumerate(items_with_price, start=1):
+        qty   = float(item.get("quantity", 0))
+        price = float(item.get("unit_price", 0))
+        rows_data.append([
+            idx,
+            item.get("code", ""),
+            item.get("name", ""),
+            item.get("unit", ""),
+            qty,
+            price,
+            qty * price,
+        ])
+    rows_data.append(["TỔNG CỘNG", "", "", "", "", "", grand_total])
+
+    ws.update("A1", rows_data, value_input_option="USER_ENTERED")
+
+    # Formatting via Sheets API
+    sid = ws.id
+    data_end = 5 + n_items  # 0-based last data row index (inclusive)
+    spreadsheet.batch_update({"requests": [
+        # Merge title A1:G1
+        {"mergeCells": {
+            "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
+                      "startColumnIndex": 0, "endColumnIndex": 7},
+            "mergeType": "MERGE_ALL",
+        }},
+        # Title style
+        {"repeatCell": {
+            "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
+                      "startColumnIndex": 0, "endColumnIndex": 7},
+            "cell": {"userEnteredFormat": {
+                "textFormat": {"bold": True, "fontSize": 14},
+                "horizontalAlignment": "CENTER",
+            }},
+            "fields": "userEnteredFormat(textFormat,horizontalAlignment)",
+        }},
+        # Header row (row 5, index 4) — bold + light blue bg
+        {"repeatCell": {
+            "range": {"sheetId": sid, "startRowIndex": 4, "endRowIndex": 5,
+                      "startColumnIndex": 0, "endColumnIndex": 7},
+            "cell": {"userEnteredFormat": {
+                "textFormat": {"bold": True},
+                "horizontalAlignment": "CENTER",
+                "backgroundColor": {"red": 0.82, "green": 0.91, "blue": 0.98},
+            }},
+            "fields": "userEnteredFormat(textFormat,horizontalAlignment,backgroundColor)",
+        }},
+        # Total row — bold
+        {"repeatCell": {
+            "range": {"sheetId": sid, "startRowIndex": data_end, "endRowIndex": data_end + 1,
+                      "startColumnIndex": 0, "endColumnIndex": 7},
+            "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+            "fields": "userEnteredFormat(textFormat)",
+        }},
+        # Number format for Đơn giá (col F=5) and Thành tiền (col G=6)
+        {"repeatCell": {
+            "range": {"sheetId": sid, "startRowIndex": 5, "endRowIndex": data_end + 1,
+                      "startColumnIndex": 5, "endColumnIndex": 7},
+            "cell": {"userEnteredFormat": {
+                "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
+            }},
+            "fields": "userEnteredFormat(numberFormat)",
+        }},
+    ]})
+
+    sheet_url = (
+        f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}"
+        f"/edit#gid={sid}"
+    )
+    return name, sheet_url
+
+
 # ── Process document ───────────────────────────────────────────────────────────
 
 async def _process(update: Update, data: dict, file_name: str):
@@ -647,6 +772,19 @@ async def _process(update: Update, data: dict, file_name: str):
                 qty  = float(item.get("quantity", 0))
                 add_new_item(code, item.get("name", ""), item.get("unit", ""), qty)
                 new_items_added.append(item)
+
+    # Resolve unit prices and create invoice for OUT documents
+    invoice_name = invoice_url = None
+    if doc_type == "OUT":
+        items_priced = _resolve_prices(data.get("items", []))
+        data = {**data, "items": items_priced}
+        invoice_name, invoice_url = create_invoice_sheet(
+            doc_ref          = data.get("doc_ref", ""),
+            dien_giai        = data.get("dien_giai", ""),
+            doc_date         = data.get("doc_date", ""),
+            so_lsx           = data.get("so_lsx", ""),
+            items_with_price = items_priced,
+        )
 
     # Color Bao_Cao_Ton_Kho BEFORE writing to GHISO
     color_results = apply_stock_colors(data.get("items", []), doc_type)
@@ -686,6 +824,26 @@ async def _process(update: Update, data: dict, file_name: str):
             await update.message.reply_text(msg[:split])
             msg = msg[split:].lstrip("\n")
         await update.message.reply_text(msg)
+
+    # Invoice notification for OUT documents
+    if invoice_name and invoice_url:
+        lines = ["🧾 *Hoá đơn xuất kho đã được tạo:*\n"]
+        lines.append(f"📄 Sheet: `{invoice_name}`")
+        items_priced = data.get("items", [])
+        grand_total  = sum(float(i.get("quantity", 0)) * float(i.get("unit_price", 0))
+                           for i in items_priced)
+        for item in items_priced:
+            qty   = float(item.get("quantity", 0))
+            price = float(item.get("unit_price", 0))
+            total = qty * price
+            src   = "" if price > 0 else " _(chưa có đơn giá)_"
+            lines.append(
+                f"  • *{item.get('name', '')}* `{str(item.get('code','')).upper()}`\n"
+                f"    {qty:.0f} {item.get('unit','')} × {price:,.0f} = *{total:,.0f}*{src}"
+            )
+        lines.append(f"\n💰 *Tổng cộng: {grand_total:,.0f}*")
+        lines.append(f"\n🔗 [Mở hoá đơn]({invoice_url})")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     # Notify about newly added items
     if new_items_added:
