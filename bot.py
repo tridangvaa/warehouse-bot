@@ -568,7 +568,8 @@ def _get_min_map() -> dict[str, float]:
         return {}
 
 
-def apply_stock_colors(items_extracted: list[dict], doc_type: str) -> list[dict]:
+def apply_stock_colors(items_extracted: list[dict], doc_type: str,
+                        items: dict = None) -> list[dict]:
     """
     Before writing to GHISO, compare each item's quantity against TỒN CUỐI
     and color columns R/S/T in Bao_Cao_Ton_Kho.
@@ -581,7 +582,8 @@ def apply_stock_colors(items_extracted: list[dict], doc_type: str) -> list[dict]
     Returns list of dicts with color, code, name, unit, qty, ton_cuoi, remaining.
     """
     ws = _ws()
-    items = get_items()
+    if items is None:
+        items = get_items()
     results = []
     fmt_requests = []
 
@@ -789,10 +791,12 @@ async def _process(update: Update, data: dict, file_name: str):
         )
         return
 
+    # Single sheet read for the entire processing flow
+    existing = get_items()
+
     # Auto-add new items to Bao_Cao_Ton_Kho for IN documents
     new_items_added = []
     if doc_type == "IN":
-        existing = get_items()
         next_stt = max(
             (int(v["stt"]) for v in existing.values() if str(v["stt"]).isdigit()),
             default=0
@@ -820,8 +824,8 @@ async def _process(update: Update, data: dict, file_name: str):
             items_with_price = items_priced,
         )
 
-    # Color Bao_Cao_Ton_Kho BEFORE writing to GHISO
-    color_results = apply_stock_colors(data.get("items", []), doc_type)
+    # Color Bao_Cao_Ton_Kho BEFORE writing to GHISO (reuse existing — no extra sheet read)
+    color_results = apply_stock_colors(data.get("items", []), doc_type, items=existing)
 
     # Write to GHISO
     append_transactions(
@@ -833,9 +837,8 @@ async def _process(update: Update, data: dict, file_name: str):
         items_extracted = data.get("items", []),
     )
 
-    # Reply with document summary (split if > 4096 chars)
-    items_after = get_items()
-    reply = format_result(data, items_after)
+    # Reply with document summary (reuse existing — no extra sheet read)
+    reply = format_result(data, existing)
     while reply:
         chunk, reply = reply[:4096], reply[4096:]
         try:
