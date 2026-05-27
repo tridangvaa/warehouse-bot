@@ -591,8 +591,10 @@ def apply_stock_colors(items_extracted: list[dict], doc_type: str,
         code = str(extracted.get("code", "")).strip().upper()
         if not code or code not in items:
             continue
-        item     = items[code]
-        row      = item["row"]
+        item = items[code]
+        if "row" not in item:
+            continue
+        row = item["row"]
         ton_cuoi = item["ton_cuoi"]
         qty      = float(extracted.get("quantity", 0))
         name     = item.get("name", extracted.get("name", code))
@@ -805,10 +807,10 @@ async def _process(update: Update, data: dict, file_name: str):
             code = str(item.get("code", "")).strip().upper()
             if code and code not in existing:
                 qty = float(item.get("quantity", 0))
-                add_new_item(code, item.get("name", ""), item.get("unit", ""), qty,
-                             next_stt=next_stt)
+                new_item = add_new_item(code, item.get("name", ""), item.get("unit", ""), qty,
+                                        next_stt=next_stt)
                 new_items_added.append(item)
-                existing[code] = {}  # mark as added so duplicates in same doc are skipped
+                existing[code] = new_item  # cache so duplicates and format_result can use it
                 next_stt += 1
 
     # Resolve unit prices and create invoice for OUT documents
