@@ -218,29 +218,29 @@ def _ghiso_ws() -> gspread.Worksheet:
 
 def append_transactions(doc_type: str, dien_giai: str, so_phieu: str,
                          so_lsx: str, doc_date: str, items_extracted: list[dict]):
-    """Write to GHISO and update Tồn cuối in Bao_Cao_Ton_Kho for each item."""
+    """Write all items to GHISO in a single batch call."""
     loai = "NK" if doc_type == "IN" else ("YC" if doc_type == "YC" else "XK")
     date_str = datetime.now().strftime("%m/%d/%Y")
     gh = _ghiso_ws()
-    for i, item in enumerate(items_extracted, start=1):
-        qty  = float(item.get("quantity", 0))
-        code = str(item.get("code", "")).strip().upper()
-        # Write to GHISO — 12 columns A–L
-        gh.append_row([
-            date_str,           # A: Ngày (today)
-            dien_giai,          # B: Diễn giải / Nội dung
-            doc_date,           # C: Ngày XNI (date from document)
-            so_lsx,             # D: Số LSX
-            so_phieu,           # E: Số phiếu
-            loai,               # F: Loại phiếu (XK/NK)
-            i,                  # G: STT
-            item.get("code", ""),   # H: Mã NVL
-            item.get("name", ""),   # I: Tên Nguyên Vật Liệu
-            item.get("unit", ""),   # J: DVT
-            qty,                # K: Số Lượng
-            item.get("note", ""),   # L: Ghi Chú
-        ], value_input_option="USER_ENTERED")
-        pass
+    rows = [
+        [
+            date_str,
+            dien_giai,
+            doc_date,
+            so_lsx,
+            so_phieu,
+            loai,
+            i,
+            item.get("code", ""),
+            item.get("name", ""),
+            item.get("unit", ""),
+            float(item.get("quantity", 0)),
+            item.get("note", ""),
+        ]
+        for i, item in enumerate(items_extracted, start=1)
+    ]
+    if rows:
+        gh.append_rows(rows, value_input_option="USER_ENTERED")
 
 
 # ── Claude extraction ──────────────────────────────────────────────────────────
