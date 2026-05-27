@@ -196,7 +196,8 @@ def add_new_item(code: str, name: str, unit: str, qty: float,
         next_stt = max(existing_stts, default=0) + 1
     # A=empty, B=STT, C=Kho, D=Mã hàng, E=Tên, F=ĐVT, G=Tồn đầu, H=Nhập kỳ, I=Xuất kỳ, J=Tồn cuối
     ws.append_row(["", next_stt, kho, code, name, unit, 0, qty, 0, qty],
-                  value_input_option="USER_ENTERED")
+                  value_input_option="USER_ENTERED",
+                  table_range="A1")
     logger.info("New item added to sheet: %s — %s", code, name)
     return {"stt": str(next_stt), "kho": kho, "code": code, "name": name,
             "unit": unit, "min_qty": 0, "ton_dau": 0,
