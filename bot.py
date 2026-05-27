@@ -583,6 +583,7 @@ def apply_stock_colors(items_extracted: list[dict], doc_type: str) -> list[dict]
     ws = _ws()
     items = get_items()
     results = []
+    fmt_requests = []
 
     for extracted in items_extracted:
         code = str(extracted.get("code", "")).strip().upper()
@@ -610,14 +611,14 @@ def apply_stock_colors(items_extracted: list[dict], doc_type: str) -> list[dict]
             remaining = ton_cuoi + qty
 
         if ratio > 0.90:
-            ws.format(f"T{row}", {"backgroundColor": {"red": 1.0, "green": 0.0, "blue": 0.0}})
             color = "🔴 Đỏ"
+            fmt_requests.append({"range": f"T{row}", "format": {"backgroundColor": {"red": 1.0, "green": 0.0, "blue": 0.0}}})
         elif ratio >= 0.70:
-            ws.format(f"S{row}", {"backgroundColor": {"red": 1.0, "green": 0.5, "blue": 0.0}})
             color = "🟠 Cam"
+            fmt_requests.append({"range": f"S{row}", "format": {"backgroundColor": {"red": 1.0, "green": 0.5, "blue": 0.0}}})
         elif ratio >= 0.50:
-            ws.format(f"R{row}", {"backgroundColor": {"red": 1.0, "green": 1.0, "blue": 0.0}})
             color = "🟡 Vàng"
+            fmt_requests.append({"range": f"R{row}", "format": {"backgroundColor": {"red": 1.0, "green": 1.0, "blue": 0.0}}})
         else:
             continue
 
@@ -631,6 +632,9 @@ def apply_stock_colors(items_extracted: list[dict], doc_type: str) -> list[dict]
             "remaining": remaining,
             "ratio":     ratio,
         })
+
+    if fmt_requests:
+        ws.batch_format(fmt_requests)
 
     return results
 
@@ -944,7 +948,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _process(update, data, file_name)
     except Exception as e:
         logger.error("handle_document error: %s", e, exc_info=True)
-        await processing.edit_text(f"❌ Lỗi xử lý {file_name}: {e}")
+        await update.message.reply_text(f"❌ Lỗi xử lý {file_name}: {e}")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -963,7 +967,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _process(update, data, "ảnh chứng từ")
     except Exception as e:
         logger.error("handle_photo error: %s", e, exc_info=True)
-        await processing.edit_text(f"❌ Lỗi xử lý ảnh: {e}")
+        await update.message.reply_text(f"❌ Lỗi xử lý ảnh: {e}")
 
 
 async def stock_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
