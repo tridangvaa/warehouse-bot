@@ -186,12 +186,14 @@ def update_stock(code: str, delta_nhap: float, delta_xuat: float):
     ws.update_cell(row, 10, cuoi)   # J = Tồn cuối
 
 
-def add_new_item(code: str, name: str, unit: str, qty: float, kho: str = "") -> dict:
+def add_new_item(code: str, name: str, unit: str, qty: float,
+                 kho: str = "", next_stt: int = None) -> dict:
     """Append a brand-new item row to Bao_Cao_Ton_Kho and return its data dict."""
     ws = _ws()
-    items = get_items()
-    existing_stts = [int(v["stt"]) for v in items.values() if str(v["stt"]).isdigit()]
-    next_stt = max(existing_stts, default=0) + 1
+    if next_stt is None:
+        items = get_items()
+        existing_stts = [int(v["stt"]) for v in items.values() if str(v["stt"]).isdigit()]
+        next_stt = max(existing_stts, default=0) + 1
     # A=empty, B=STT, C=Kho, D=Mã hàng, E=Tên, F=ĐVT, G=Tồn đầu, H=Nhập kỳ, I=Xuất kỳ, J=Tồn cuối
     ws.append_row(["", next_stt, kho, code, name, unit, 0, qty, 0, qty],
                   value_input_option="USER_ENTERED")
@@ -713,7 +715,7 @@ def create_invoice_sheet(doc_ref: str, dien_giai: str, doc_date: str,
         ])
     rows_data.append(["TỔNG CỘNG", "", "", "", "", "", grand_total])
 
-    ws.update("A1", rows_data, value_input_option="USER_ENTERED")
+    ws.update(rows_data, "A1", value_input_option="USER_ENTERED")
 
     # Formatting via Sheets API
     sid = ws.id
@@ -787,12 +789,19 @@ async def _process(update: Update, data: dict, file_name: str):
     new_items_added = []
     if doc_type == "IN":
         existing = get_items()
+        next_stt = max(
+            (int(v["stt"]) for v in existing.values() if str(v["stt"]).isdigit()),
+            default=0
+        ) + 1
         for item in data.get("items", []):
             code = str(item.get("code", "")).strip().upper()
             if code and code not in existing:
-                qty  = float(item.get("quantity", 0))
-                add_new_item(code, item.get("name", ""), item.get("unit", ""), qty)
+                qty = float(item.get("quantity", 0))
+                add_new_item(code, item.get("name", ""), item.get("unit", ""), qty,
+                             next_stt=next_stt)
                 new_items_added.append(item)
+                existing[code] = {}  # mark as added so duplicates in same doc are skipped
+                next_stt += 1
 
     # Resolve unit prices and create invoice for OUT documents
     invoice_name = invoice_url = None
@@ -935,7 +944,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _process(update, data, file_name)
     except Exception as e:
         logger.error("handle_document error: %s", e, exc_info=True)
-        await processing.edit_text(f"❌ Lỗi xử lý *{file_name}*: {e}", parse_mode="Markdown")
+        await processing.edit_text(f"❌ Lỗi xử lý {file_name}: {e}")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -954,7 +963,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _process(update, data, "ảnh chứng từ")
     except Exception as e:
         logger.error("handle_photo error: %s", e, exc_info=True)
-        await processing.edit_text(f"❌ Lỗi xử lý ảnh: {e}", parse_mode="Markdown")
+        await processing.edit_text(f"❌ Lỗi xử lý ảnh: {e}")
 
 
 async def stock_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
