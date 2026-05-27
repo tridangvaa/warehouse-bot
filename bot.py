@@ -833,13 +833,15 @@ async def _process(update: Update, data: dict, file_name: str):
         items_extracted = data.get("items", []),
     )
 
-    # Reply with document summary
+    # Reply with document summary (split if > 4096 chars)
     items_after = get_items()
     reply = format_result(data, items_after)
-    try:
-        await update.message.reply_text(reply, parse_mode="Markdown")
-    except Exception:
-        await update.message.reply_text(reply)  # fallback: plain text
+    while reply:
+        chunk, reply = reply[:4096], reply[4096:]
+        try:
+            await update.message.reply_text(chunk, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(chunk)
 
     # Send detailed color warning after GHISO write
     if color_results:
