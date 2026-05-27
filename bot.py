@@ -187,21 +187,24 @@ def update_stock(code: str, delta_nhap: float, delta_xuat: float):
 
 
 def add_new_item(code: str, name: str, unit: str, qty: float,
-                 kho: str = "", next_stt: int = None) -> dict:
+                 kho: str = "", next_stt: int = None, next_row: int = None) -> dict:
     """Append a brand-new item row to Bao_Cao_Ton_Kho and return its data dict."""
     ws = _ws()
-    if next_stt is None:
+    if next_stt is None or next_row is None:
         items = get_items()
         existing_stts = [int(v["stt"]) for v in items.values() if str(v["stt"]).isdigit()]
         next_stt = max(existing_stts, default=0) + 1
+        next_row = max((v["row"] for v in items.values()), default=1) + 1
     # A=empty, B=STT, C=Kho, D=Mã hàng, E=Tên, F=ĐVT, G=Tồn đầu, H=Nhập kỳ, I=Xuất kỳ, J=Tồn cuối
-    ws.append_row(["", next_stt, kho, code, name, unit, 0, qty, 0, qty],
-                  value_input_option="USER_ENTERED",
-                  table_range="A1")
-    logger.info("New item added to sheet: %s — %s", code, name)
+    ws.update(
+        [["", next_stt, kho, code, name, unit, 0, qty, 0, qty]],
+        f"A{next_row}",
+        value_input_option="USER_ENTERED",
+    )
+    logger.info("New item added to sheet row %d: %s — %s", next_row, code, name)
     return {"stt": str(next_stt), "kho": kho, "code": code, "name": name,
             "unit": unit, "min_qty": 0, "ton_dau": 0,
-            "nhap_ky": qty, "xuat_ky": 0, "ton_cuoi": qty}
+            "nhap_ky": qty, "xuat_ky": 0, "ton_cuoi": qty, "row": next_row}
 
 
 def _ghiso_ws() -> gspread.Worksheet:
@@ -804,15 +807,20 @@ async def _process(update: Update, data: dict, file_name: str):
             (int(v["stt"]) for v in existing.values() if str(v["stt"]).isdigit()),
             default=0
         ) + 1
+        next_row = max(
+            (v["row"] for v in existing.values() if "row" in v),
+            default=1
+        ) + 1
         for item in data.get("items", []):
             code = str(item.get("code", "")).strip().upper()
             if code and code not in existing:
                 qty = float(item.get("quantity", 0))
                 new_item = add_new_item(code, item.get("name", ""), item.get("unit", ""), qty,
-                                        next_stt=next_stt)
+                                        next_stt=next_stt, next_row=next_row)
                 new_items_added.append(item)
                 existing[code] = new_item  # cache so duplicates and format_result can use it
                 next_stt += 1
+                next_row += 1
 
     # Resolve unit prices and create invoice for OUT documents
     invoice_name = invoice_url = None
