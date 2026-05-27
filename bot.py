@@ -184,6 +184,21 @@ def update_stock(code: str, delta_nhap: float, delta_xuat: float):
     ws.update_cell(row, 10, cuoi)   # J = Tồn cuối
 
 
+def add_new_item(code: str, name: str, unit: str, qty: float, kho: str = "") -> dict:
+    """Append a brand-new item row to Bao_Cao_Ton_Kho and return its data dict."""
+    ws = _ws()
+    items = get_items()
+    existing_stts = [int(v["stt"]) for v in items.values() if str(v["stt"]).isdigit()]
+    next_stt = max(existing_stts, default=0) + 1
+    # A=empty, B=STT, C=Kho, D=Mã hàng, E=Tên, F=ĐVT, G=Tồn đầu, H=Nhập kỳ, I=Xuất kỳ, J=Tồn cuối
+    ws.append_row(["", next_stt, kho, code, name, unit, 0, qty, 0, qty],
+                  value_input_option="USER_ENTERED")
+    logger.info("New item added to sheet: %s — %s", code, name)
+    return {"stt": str(next_stt), "kho": kho, "code": code, "name": name,
+            "unit": unit, "min_qty": 0, "ton_dau": 0,
+            "nhap_ky": qty, "xuat_ky": 0, "ton_cuoi": qty}
+
+
 def _ghiso_ws() -> gspread.Worksheet:
     spreadsheet = _get_gc().open_by_key(GOOGLE_SHEET_ID)
     try:
@@ -622,6 +637,17 @@ async def _process(update: Update, data: dict, file_name: str):
         )
         return
 
+    # Auto-add new items to Bao_Cao_Ton_Kho for IN documents
+    new_items_added = []
+    if doc_type == "IN":
+        existing = get_items()
+        for item in data.get("items", []):
+            code = str(item.get("code", "")).strip().upper()
+            if code and code not in existing:
+                qty  = float(item.get("quantity", 0))
+                add_new_item(code, item.get("name", ""), item.get("unit", ""), qty)
+                new_items_added.append(item)
+
     # Color Bao_Cao_Ton_Kho BEFORE writing to GHISO
     color_results = apply_stock_colors(data.get("items", []), doc_type)
 
@@ -660,6 +686,24 @@ async def _process(update: Update, data: dict, file_name: str):
             await update.message.reply_text(msg[:split])
             msg = msg[split:].lstrip("\n")
         await update.message.reply_text(msg)
+
+    # Notify about newly added items
+    if new_items_added:
+        lines = [
+            "✨ *Hàng hoá mới đã được thêm vào danh mục:*\n",
+            f"📋 Phiếu: {data.get('doc_ref', '—')}  |  Ngày: {data.get('doc_date', '—')}\n",
+        ]
+        for item in new_items_added:
+            code = str(item.get("code", "")).strip().upper()
+            name = item.get("name", "")
+            unit = item.get("unit", "")
+            qty  = float(item.get("quantity", 0))
+            lines.append(
+                f"  • *{name}* `{code}`\n"
+                f"    ĐVT: {unit}  |  Tồn ban đầu: *{qty:.0f}* {unit}"
+            )
+        lines.append("\n📌 _Nhớ cập nhật Tồn mức MIN cho hàng mới trong sheet._")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 # ── Telegram handlers ──────────────────────────────────────────────────────────
