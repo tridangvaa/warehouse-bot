@@ -635,9 +635,30 @@ def apply_stock_colors(items_extracted: list[dict], doc_type: str) -> list[dict]
 
 # ── Price resolution & invoice ────────────────────────────────────────────────
 
+def _get_bang_gia_prices() -> dict[str, float]:
+    """Read Mã hàng (col D, index 3) and Đơn giá 1 (col G, index 6) from BANG_GIA sheet."""
+    try:
+        ws = _get_gc().open_by_key(GOOGLE_SHEET_ID).worksheet("BANG_GIA")
+        rows = ws.get_all_values()
+        prices = {}
+        for row in rows:
+            if len(row) < 7:
+                continue
+            code = str(row[3]).strip().upper()
+            if not code:
+                continue
+            price = _num(row[6])
+            if price > 0:
+                prices[code] = price
+        return prices
+    except Exception as e:
+        logger.warning("Could not read BANG_GIA prices: %s", e)
+        return {}
+
+
 def _resolve_prices(items_extracted: list[dict]) -> list[dict]:
-    """Fill unit_price from sheet master (col K) when not present in document."""
-    price_map = {code: item["don_gia"] for code, item in get_items().items()}
+    """Fill unit_price from BANG_GIA sheet (col G) when not present in document."""
+    price_map = _get_bang_gia_prices()
     result = []
     for item in items_extracted:
         code      = str(item.get("code", "")).strip().upper()
