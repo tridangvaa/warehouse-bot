@@ -835,8 +835,10 @@ async def _process(update: Update, data: dict, file_name: str):
             items_with_price = items_priced,
         )
 
-    # Color Bao_Cao_Ton_Kho BEFORE writing to GHISO (reuse existing — no extra sheet read)
-    color_results = apply_stock_colors(data.get("items", []), doc_type, items=existing)
+    # Color Bao_Cao_Ton_Kho for OUT/YC only (ratio = qty_out / ton_cuoi)
+    color_results = []
+    if doc_type in ("OUT", "YC"):
+        color_results = apply_stock_colors(data.get("items", []), doc_type, items=existing)
 
     # Write to GHISO
     append_transactions(
